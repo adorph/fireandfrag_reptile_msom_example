@@ -92,5 +92,5 @@ dataprep <- function(filepath, specieslist) {
   
   return(list(y=y, ysum=ysum, nsite=nsite, nrep=nrep, nspec=nspec, species.list=species.list, spec.name.list=spec.name.list,
               spec.id.list=spec.id.list, ordered.spec.name.list=ordered.spec.name.list, C=C,obs.occ=obs.occ,
-              stddate=stddate, stdrain=stdrain, stdtemp=stdtemp, date=date, temp=temp, rain=rain, plotspdet = spdections))
+              stddate=stddate, stdtemp=stdtemp, date=date, temp=temp, plotspdet = spdections))
 }

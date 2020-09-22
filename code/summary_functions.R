@@ -1,11 +1,48 @@
+##
+## This file contains summary functions used to evaluate model fit and how species respond to environmental
+## correlates. Parts of these functions are based on code from Kéry M & Royle JA (2016) (Applied Hierarchical 
+## Modeling in Ecology: Analysis of distribution, abundance and species richness in R and BUGS: Volume 1).
+##
+## Inputs mean:
+## data:          data list compiled using the dataprep function
+## model:         jags model
+## mcmc:          jags.basic model
+## extract:       parameter value to extract from the MSOM model (e.g. lpsi) 
+##
+## NOTE: The some functions require a csv containing a list of your sites (using site id) and the x
+## and y coordinates for the sites. These need to be in the same order as they were in the dataprep matrix.
+## NOTE: Some of the functions (e.g. cumulativeDet) will need to be updated for other datasets.
+
+
+#Extract rows from results based on parameter name
+extract.par <- function(model, extract){
+  ndf <- setDT(as.data.frame(model$summary), keep.rownames = "parameter")
+  ndf <- dplyr:: filter(ndf, grepl(extract, parameter))
+  return(ndf)
+}
+
+#Extract species richness with site Id
+extract.nsite <- function(model){
+  require(dplyr)
+  df <- read.csv("./site_coords.csv", header = T, sep = ",", dec = ".")
+  df <- (df %>% 
+           arrange(site) %>%
+           select(site=site, xcoord, ycoord))
+  nsite <- extract.par(model, "Nsite")
+  out <- cbind(df, nsite)
+  return(out)
+}
+
 #Check correlation between observed and mean estimated species richness  
 checkCor <- function(data, model){
   ndf<-extract.par(model, "Nsite")
-  ndf$C <- data$C
+  ndf$C <- data$C #Observed species richness from the dataprep list
   ret <- cor(ndf$mean, ndf$C)
   return(ret)
 }  
 
+#Calculate and plot cumulative detection for the species over 50 days. Returns a plot and table containing the species
+#and detection probabilities after a single day and after the 5 day sample period.
 cumulativeDet <- function(data, model){
   require(ggplot2)
   require(dplyr)
@@ -32,23 +69,19 @@ cumulativeDet <- function(data, model){
   nddp <- ndf %>% filter(day %in% 5)
   mns <- format(round(nddp$mean, 2), nsmall=2)
   
+
   ndf <- ndf %>% mutate(species, lab=recode(species,
                                             "Eastern Three Lined Skink" = paste("ETS : mu(5) =", mns[1]),
-                                            "Pale flecked Garden Skink" = paste("BUR : mu(5) =", mns[2]),
-                                            "Robust Ctenotus" = paste("CBP : mu(5) =", mns[3]),
-                                            "Shrubland Morethia Skink" = paste("DUA : mu(5) =", mns[4]),
-                                            "Eastern Grey Kangarooo" = paste("EGK : mu(5) =", mns[5]),
-                                            "Long nosed Bandicoot" = paste("LNB : mu(5) =", mns[6]), 
-                                            "Long nosed Potoroo" = paste("LNP : mu(5) =", mns[7]), 
-                                            "Red necked Wallaby" = paste("RNW : mu(5) =", mns[8]),
-                                            "Short beaked Echidna" = paste("SBE : mu(5) =", mns[9]),
-                                            "Southern Brown Bandicoot" = paste("SBB : mu(5) =", mns[10]),
-                                            "Swamp Antechinus" = paste("SWA : mu(5) =", mns[11]),
-                                            "Swamp Rat" = paste("SWR : mu(5) =", mns[12]),
-                                            "Swamp Wallaby" = paste("SWW : mu(5) =", mns[13]),
-                                            "White footed Dunnart" = paste("WFD : mu(5) =", mns[14]) ))
+                                            "Pale flecked Garden Skink" = paste("PGS : mu(5) =", mns[2]),
+                                            "Robust Ctenotus" = paste("CTE : mu(5) =", mns[3]),
+                                            "Shrubland Morethia Skink" = paste("SMS : mu(5) =", mns[4]),
+                                            "South eastern Slider" = paste("SES : mu(5) =", mns[5]),
+                                            "Southern Grass Skink" = paste("SGS : mu(5) =", mns[6]), 
+                                            "Southern Water Skink" = paste("SWS : mu(5) =", mns[7]),
+                                            "White's Skink" = paste("WHI : mu(5) =", mns[8]) ))
   
-  #plot a graph
+  # Plot a graph of cumulative detection probability over 50 days with the mean detection probability after 5 days marked by
+  # a dotted line with the value printed above the graph.
   aa <- ggplot(data=ndf, aes(x=day, y=mean, group=species))+
     geom_line(size=1)+
     geom_vline(xintercept=c(5), linetype="dotted")+  #change 20 to the deployment time for your cameras 
@@ -84,7 +117,7 @@ occ.det.sum <- function(data, model){
 
 #Create a list of estimated true occurrence for species at a site, with X and Y coords for that site for visualisation
 spp.site <- function(data, model) {
-  df <- read.csv("C:/Users/adorph/Documents/3_Casterton_SpatialHeterogeneity/statistical_analysis/msom/site_coords.csv", header = T, sep = ",", dec = ".")
+  df <- read.csv("./site_coords.csv", header = T, sep = ",", dec = ".")
   df <- df[order(df$site),]
   df <- (df %>% select(site=site, xcoord, ycoord))[1:107,]
   spdf <- as.data.frame(model$mean$z)
@@ -101,24 +134,6 @@ spp.site <- function(data, model) {
   sp50 <- sp50 %>% pivot_longer(cols=4:ncol(sp50), names_to="Species", values_to = "q50")
   out <- merge(spdf, spsd, by=c("site", "xcoord", "ycoord", "Species"))
   out <- merge(out, sp50, by=c("site", "xcoord", "ycoord", "Species"))
-  return(out)
-}
-
-#Extract rows from results based on parameter name
-extract.par <- function(model, extract){
-  ndf <- setDT(as.data.frame(model$summary), keep.rownames = "parameter")
-  ndf <- filter(ndf, grepl(extract, parameter))
-  return(ndf)
-}
-
-#Extract species richness with site Id
-extract.nsite <- function(model){
-  df <- read.csv("C:/Users/adorph/Documents/3_Casterton_SpatialHeterogeneity/statistical_analysis/msom/site_coords.csv",header = T, sep = ",", dec = ".")
-  df <- df[order(df$site),]
-  df <- (df %>% select(site=site, xcoord, ycoord))[1:107,]
-  nsite <- extract.par(model, "Nsite")
-  out <- cbind(df, nsite)
-  out <- out[,-4]
   return(out)
 }
 
