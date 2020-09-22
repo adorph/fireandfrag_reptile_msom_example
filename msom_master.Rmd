@@ -1,0 +1,519 @@
+---
+title: "Multi-Species Occupancy-Detection Model Master File"
+author: "Annalie Dorph"
+date: "September 22nd 2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Load libraries
+```{r libraries}
+require(rjags)
+require(jagsUI)
+require(tidyverse)
+require(ggplot2)
+require(cowplot)
+require(grid)
+require(gridExtra)
+require(data.table)
+```
+
+Load functions for data preparation and summaries of output
+```{r functions}
+#Data preparation
+source("./code/data_preparation.R")
+source("./code/summary_functions.R")
+```
+
+Create subdirectories to save your data
+```{r repositories}
+ifelse(dir.exists("./jagsoutput/"), TRUE, dir.create("./jagoutput/"))
+ifelse(dir.exists("./species_prediction/"), TRUE, dir.create("./species_prediction/"))
+```
+
+Regression coefficients used included:
+
+* Temperature
+* Temperature (quadratic)
+* Date
+* Date (quadratic)
+
+**Model 1** will test broad priors for the regression coefficients
+Prior specification
+mu hyperdistributions: wide normal priors (sd of 31 ie precision 0.001)
+sd hyperdistributions: uniform priors [0-10]
+```{r model1}
+# Define model in BUGS language
+sink("MSODM_jags_v1.txt")
+cat("
+    model {
+
+    # Priors
+    # Hyperparameters
+    for(k in 1:nspec){                                  # Loop over all species in array
+      lpsi[k] ~ dnorm(mu.lpsi, tau.lpsi)                # Baseline community occupancy probability
+      lp[k] ~ dnorm(mu.lp, tau.lp)                      # Baseline community detection probability
+      # Covariate effects on detection:
+      betalp1[k] ~ dnorm(mu.betalp1, tau.betalp1)
+      betalp2[k] ~ dnorm(mu.betalp2, tau.betalp2)
+      betalp3[k] ~ dnorm(mu.betalp3, tau.betalp3)
+      betalp4[k] ~ dnorm(mu.betalp4, tau.betalp4)
+    }
+
+    # Hyperpriors for community hyperparameters in occupancy
+    mu.lpsi ~ dnorm(0,0.001)                            # Community means of occupancy probability
+    tau.lpsi <- pow(sd.lpsi, -2)                        # Community precision of occupancy probability
+    sd.lpsi ~ dunif(0,10)                                # Community dispersion
+
+    # Hyperpriors for community hyperparameters in detection
+    mu.lp ~ dnorm(0,0.001)                              # Community means of detection probability
+    tau.lp <- pow(sd.lp, -2)                            # Community precision of detection probability
+    sd.lp ~ dunif(0,10)                                 # Community dispersion
+
+    mu.betalp1 ~ dnorm(0,0.001)
+    tau.betalp1 <- pow(sd.betalp1, -2)
+    sd.betalp1 ~ dunif(0,10)
+    mu.betalp2 ~ dnorm(0,0.001)
+    tau.betalp2 <- pow(sd.betalp2, -2)
+    sd.betalp2 ~ dunif(0,10)
+    mu.betalp3 ~ dnorm(0,0.001)
+    tau.betalp3 <- pow(sd.betalp3, -2)
+    sd.betalp3 ~ dunif(0,10)
+    mu.betalp4 ~ dnorm(0,0.001)
+    tau.betalp4 <- pow(sd.betalp4, -2)
+    sd.betalp4 ~ dunif(0,10)
+
+    # Ecological model for true occurrence (process model)
+    for(k in 1:nspec){                                  # Loop over species
+      for (i in 1:nsite) {                              # Loop over sites
+        logit(psi[i,k]) <- lpsi[k]
+        z[i,k] ~ dbern(psi[i,k])
+      }
+    }
+
+    # Observation model for replicated detection/nondetection observations
+    for(k in 1:nspec){                                  # Loop over species
+      for (i in 1:nsite){                               # Loop over sites
+        for(j in 1:nrep){                               # Loop over survey
+          logit(p[i,j,k]) <- lp[k] +
+                             betalp1[k] * temp[i,j] + betalp2[k] * pow(temp[i,j], 2) +
+                             betalp3[k] * date[i,j] + betalp4[k] * pow(date[i,j], 2)
+          mu.p[i,j,k] <- z[i,k] * p[i,j,k]
+          y[i,j,k] ~ dbern(mu.p[i,j,k])
+
+        }
+      }
+    }
+
+    # Derived quantities
+    for(k in 1:nspec){                                  # Loop over species
+      Nocc.fs[k] <- sum(z[,k])                          # Number of occupied sites
+    }
+    for (i in 1:nsite){                                 # Loop over sites
+      Nsite[i] <- sum(z[i,])                            # Number of occurring species at each site
+    }
+
+}",fill = TRUE)
+sink()
+```
+
+**Model 2** will test narrower priors for the regression coefficients
+Prior specification
+mu hyperdistributions: narrower normal priors (sd of 2.25 ie precision 0.2)
+sd hyperdistributions: uniform priors [0-10]
+```{r model2}
+# Define model in BUGS language
+sink("MSODM_jags_v2.txt")
+cat("
+    model {
+
+    # Priors
+    # Hyperparameters
+    for(k in 1:nspec){                                  # Loop over all species in array
+      lpsi[k] ~ dnorm(mu.lpsi, tau.lpsi)                # Baseline community occupancy probability
+      lp[k] ~ dnorm(mu.lp, tau.lp)                      # Baseline community detection probability
+      # Covariate effects on detection:
+      betalp1[k] ~ dnorm(mu.betalp1, tau.betalp1)
+      betalp2[k] ~ dnorm(mu.betalp2, tau.betalp2)
+      betalp3[k] ~ dnorm(mu.betalp3, tau.betalp3)
+      betalp4[k] ~ dnorm(mu.betalp4, tau.betalp4)
+    }
+
+    # Hyperpriors for community hyperparameters in occupancy
+    mu.lpsi ~ dnorm(0,0.2)                            # Community means of occupancy probability
+    tau.lpsi <- pow(sd.lpsi, -2)                        # Community precision of occupancy probability
+    sd.lpsi ~ dunif(0,10)                                # Community dispersion
+
+    # Hyperpriors for community hyperparameters in detection
+    mu.lp ~ dnorm(0,0.2)                              # Community means of detection probability
+    tau.lp <- pow(sd.lp, -2)                            # Community precision of detection probability
+    sd.lp ~ dunif(0,10)                                 # Community dispersion
+
+    mu.betalp1 ~ dnorm(0,0.2)
+    tau.betalp1 <- pow(sd.betalp1, -2)
+    sd.betalp1 ~ dunif(0,10)
+    mu.betalp2 ~ dnorm(0,0.2)
+    tau.betalp2 <- pow(sd.betalp2, -2)
+    sd.betalp2 ~ dunif(0,10)
+    mu.betalp3 ~ dnorm(0,0.2)
+    tau.betalp3 <- pow(sd.betalp3, -2)
+    sd.betalp3 ~ dunif(0,10)
+    mu.betalp4 ~ dnorm(0,0.2)
+    tau.betalp4 <- pow(sd.betalp4, -2)
+    sd.betalp4 ~ dunif(0,10)
+
+    # Ecological model for true occurrence (process model)
+    for(k in 1:nspec){                                  # Loop over species
+      for (i in 1:nsite) {                              # Loop over sites
+        logit(psi[i,k]) <- lpsi[k]
+        z[i,k] ~ dbern(psi[i,k])
+      }
+    }
+
+    # Observation model for replicated detection/nondetection observations
+    for(k in 1:nspec){                                  # Loop over species
+      for (i in 1:nsite){                               # Loop over sites
+        for(j in 1:nrep){                               # Loop over survey
+          logit(p[i,j,k]) <- lp[k] +
+                             betalp1[k] * temp[i,j] + betalp2[k] * pow(temp[i,j], 2) +
+                             betalp3[k] * date[i,j] + betalp4[k] * pow(date[i,j], 2)
+          mu.p[i,j,k] <- z[i,k] * p[i,j,k]
+          y[i,j,k] ~ dbern(mu.p[i,j,k])
+
+        }
+      }
+    }
+
+    # Derived quantities
+    for(k in 1:nspec){                                  # Loop over species
+      Nocc.fs[k] <- sum(z[,k])                          # Number of occupied sites
+    }
+    for (i in 1:nsite){                                 # Loop over sites
+      Nsite[i] <- sum(z[i,])                            # Number of occurring species at each site
+    }
+}",fill = TRUE)
+sink()
+```
+
+**Model 3** will test narrower priors for the regression coefficients
+Prior specification
+mu hyperdistributions: narrower normal priors (sd of 2.25 ie precision 0.2)
+sd hyperdistributions: narrow uniform priors [0-5]
+```{r model3}
+# # Define model in BUGS language
+# sink("MSODM_jags_v3.txt")
+# cat("
+#     model {
+#
+#     # Priors
+#     # Hyperparameters
+#     for(k in 1:nspec){                                  # Loop over all species in array
+#       lpsi[k] ~ dnorm(mu.lpsi, tau.lpsi)                # Baseline community occupancy probability
+#       lp[k] ~ dnorm(mu.lp, tau.lp)                      # Baseline community detection probability
+#       # Covariate effects on detection:
+#       betalp1[k] ~ dnorm(mu.betalp1, tau.betalp1)
+#       betalp2[k] ~ dnorm(mu.betalp2, tau.betalp2)
+#       betalp3[k] ~ dnorm(mu.betalp3, tau.betalp3)
+#       betalp4[k] ~ dnorm(mu.betalp4, tau.betalp4)
+#     }
+#
+#     # Hyperpriors for community hyperparameters in occupancy
+#     mu.lpsi ~ dnorm(0,0.2)                            # Community means of occupancy probability
+#     tau.lpsi <- pow(sd.lpsi, -2)                        # Community precision of occupancy probability
+#     sd.lpsi ~ dunif(0,5)                                # Community dispersion
+#
+#     # Hyperpriors for community hyperparameters in detection
+#     mu.lp ~ dnorm(0,0.2)                              # Community means of detection probability
+#     tau.lp <- pow(sd.lp, -2)                            # Community precision of detection probability
+#     sd.lp ~ dunif(0,5)                                 # Community dispersion
+#
+#     mu.betalp1 ~ dnorm(0,0.2)
+#     tau.betalp1 <- pow(sd.betalp1, -2)
+#     sd.betalp1 ~ dunif(0,5)
+#     mu.betalp2 ~ dnorm(0,0.2)
+#     tau.betalp2 <- pow(sd.betalp2, -2)
+#     sd.betalp2 ~ dunif(0,5)
+#     mu.betalp3 ~ dnorm(0,0.2)
+#     tau.betalp3 <- pow(sd.betalp3, -2)
+#     sd.betalp3 ~ dunif(0,5)
+#     mu.betalp4 ~ dnorm(0,0.2)
+#     tau.betalp4 <- pow(sd.betalp4, -2)
+#     sd.betalp4 ~ dunif(0,5)
+#
+#     # Ecological model for true occurrence (process model)
+#     for(k in 1:nspec){                                  # Loop over species
+#       for (i in 1:nsite) {                              # Loop over sites
+#         logit(psi[i,k]) <- lpsi[k]
+#         z[i,k] ~ dbern(psi[i,k])
+#       }
+#     }
+#
+#     # Observation model for replicated detection/nondetection observations
+#     for(k in 1:nspec){                                  # Loop over species
+#       for (i in 1:nsite){                               # Loop over sites
+#         for(j in 1:nrep){                               # Loop over survey
+#           logit(p[i,j,k]) <- lp[k] +
+#                              betalp1[k] * temp[i,j] + betalp2[k] * pow(temp[i,j], 2) +
+#                              betalp3[k] * date[i,j] + betalp4[k] * pow(date[i,j], 2)
+#           mu.p[i,j,k] <- z[i,k] * p[i,j,k]
+#           y[i,j,k] ~ dbern(mu.p[i,j,k])
+#
+#         }
+#       }
+#     }
+#
+#     # Derived quantities
+#     for(k in 1:nspec){                                  # Loop over species
+#       Nocc.fs[k] <- sum(z[,k])                          # Number of occupied sites
+#     }
+#     for (i in 1:nsite){                                 # Loop over sites
+#       Nsite[i] <- sum(z[i,])                            # Number of occurring species at each site
+#     }
+# }",fill = TRUE)
+# sink()
+```
+
+**Model 4** will test mid range priors for the regression coefficients
+Prior specification
+mu hyperdistributions: narrower normal priors (sd of 2.25 ie precision 0.2)
+sd hyperdistributions: narrower uniform priors [2]
+```{r model4}
+# # Define model in BUGS language
+# sink("MSODM_jags_v4.txt")
+# cat("
+#     model {
+#
+#     # Priors
+#     # Hyperparameters
+#     for(k in 1:nspec){                                  # Loop over all species in array
+#       lpsi[k] ~ dnorm(mu.lpsi, tau.lpsi)                # Baseline community occupancy probability
+#       lp[k] ~ dnorm(mu.lp, tau.lp)                      # Baseline community detection probability
+#       # Covariate effects on detection:
+#       betalp1[k] ~ dnorm(mu.betalp1, tau.betalp1)
+#       betalp2[k] ~ dnorm(mu.betalp2, tau.betalp2)
+#       betalp3[k] ~ dnorm(mu.betalp3, tau.betalp3)
+#       betalp4[k] ~ dnorm(mu.betalp4, tau.betalp4)
+#     }
+#
+#     # Hyperpriors for community hyperparameters in occupancy
+#     mu.lpsi ~ dnorm(0,0.2)                            # Community means of occupancy probability
+#     tau.lpsi <- pow(sd.lpsi, -2)                       # Community precision of occupancy probability
+#     sd.lpsi ~ dunif(0,2)                               # Community dispersion
+#
+#     # Hyperpriors for community hyperparameters in detection
+#     mu.lp ~ dnorm(0,0.2)                              # Community means of detection probability
+#     tau.lp <- pow(sd.lp, -2)                          # Community precision of detection probability
+#     sd.lp ~ dunif(0,2)                                # Community dispersion
+#
+#     mu.betalp1 ~ dnorm(0,0.2)
+#     tau.betalp1 <- pow(sd.betalp1, -2)
+#     sd.betalp1 ~ dunif(0,2)
+#     mu.betalp2 ~ dnorm(0,0.2)
+#     tau.betalp2 <- pow(sd.betalp2, -2)
+#     sd.betalp2 ~ dunif(0,2)
+#     mu.betalp3 ~ dnorm(0,0.2)
+#     tau.betalp3 <- pow(sd.betalp3, -2)
+#     sd.betalp3 ~ dunif(0,2)
+#     mu.betalp4 ~ dnorm(0,0.2)
+#     tau.betalp4 <- pow(sd.betalp4, -2)
+#     sd.betalp4 ~ dunif(0,2)
+#
+#     # Ecological model for true occurrence (process model)
+#     for(k in 1:nspec){                                  # Loop over species
+#       for (i in 1:nsite) {                              # Loop over sites
+#         logit(psi[i,k]) <- lpsi[k]
+#         z[i,k] ~ dbern(psi[i,k])
+#       }
+#     }
+#
+#     # Observation model for replicated detection/nondetection observations
+#     for(k in 1:nspec){                                  # Loop over species
+#       for (i in 1:nsite){                               # Loop over sites
+#         for(j in 1:nrep){                               # Loop over survey
+#           logit(p[i,j,k]) <- lp[k] +
+#                              betalp1[k] * temp[i,j] + betalp2[k] * pow(temp[i,j], 2) +
+#                              betalp3[k] * date[i,j] + betalp4[k] * pow(date[i,j], 2)
+#           mu.p[i,j,k] <- z[i,k] * p[i,j,k]
+#           y[i,j,k] ~ dbern(mu.p[i,j,k])
+#
+#         # # NOT WORKING YET
+#         # # Goodness of Fit
+#         #
+#         # #Residual
+#         # det.residual[i,j,k] <- y[i.j.k] - mu.p[i,j,k]
+#         #
+#         # # Pearson residuals.
+#         # ynew[i,j,k] ~ dbern(mu.p[i,j,k]) # Create simulated dataset to calculate the Bayesian p-value.
+#         #
+#         # p.det.res[i,j,k] <- (y[i,j,k] - mu.p[i,j,k])/sqrt((mu.p[i,j,k]+0.001)*(1-mu.p[i,j,k]-0.001))
+#         # p.det.resnew[i,j,k] <- (ynew[i,j,k] - mu.p[i,j,k])/sqrt((mu.p[i,j,k]+0.001)*(1-mu.p[i,j,k]-0.001))
+#         #
+#         # RSS[i,j,k]<- pow(p.det.res[i,j,k],2)
+#         # RSSnew[i,j,k]<- pow(p.det.resnew[i,j,k],2)
+#
+#         }
+#       }
+#     }
+#
+#     # # Bayesian P-value
+#     # pvalue <- mean(sum(RSSnew[])>sum(RSS[]))
+#
+#     # Derived quantities
+#     for(k in 1:nspec){                                  # Loop over species
+#       Nocc.fs[k] <- sum(z[,k])                          # Number of occupied sites
+#     }
+#     for (i in 1:nsite){                                 # Loop over sites
+#       Nsite[i] <- sum(z[i,])                            # Number of occurring species at each site
+#     }
+# }",fill = TRUE)
+# sink()
+```
+
+
+**Model dataset ** will run on the all *small* skink species
+```{r data1}
+splist <- c("Robust Ctenotus", "Eastern Three Lined Skink", "Pale flecked Garden Skink", "South eastern Slider", "Southern Grass Skink", "Shrubland Morethia Skink", "Southern Water Skink", "White's Skink")
+dpSS <- dataprep(filepath="./example_msom.csv", specieslist=splist)
+
+# Bundle and summarize data
+str(win.dataSS <-list(y = dpSS$y, nsite = dpSS$nsite, nrep = dpSS$nrep, nspec = dpSS$nspec, temp = dpSS$stdtemp, date = dpSS$stddate))
+
+# Initial values
+zstSS <- array(1, dim = c(dpSS$nsite, dpSS$nspec)) # Set all species as occurring
+initsSS <- function() {list(z = zstSS, lpsi = rnorm(n = dpSS$nspec), lp = rnorm(n = dpSS$nspec), betalp1 = rnorm(n = dpSS$nspec), betalp2 = rnorm(n = dpSS$nspec), betalp3 = rnorm(n = dpSS$nspec), betalp4 = rnorm(n = dpSS$nspec))}
+```
+
+**Model Parameters**
+Note: Model convergence was based on Rhat values > 1.1 for parameters: "mu.lpsi", "sd.lpsi", "mu.lp", "sd.lp", "mu.betalp1", "sd.betalp1", "mu.betalp2", "sd.betalp2", "mu.betalp3", "sd.betalp3", "mu.betalp4", "sd.betalp4", "Nsite", "Nocc.fs", "lpsi",  and "lp" in the params1 list. 
+```{r parameters}
+#Parameters monitored
+params1 <- c("mu.lpsi", "sd.lpsi", "mu.lp", "sd.lp", "mu.betalp1", "sd.betalp1", "mu.betalp2", "sd.betalp2", "mu.betalp3", "sd.betalp3", "mu.betalp4", "sd.betalp4", "Nsite", "Nocc.fs", "lpsi", "lp", "z")
+params2 <- c("mu.lpsi", "sd.lpsi", "lpsi", "lp", "betalp1", "betalp2", "betalp3", "betalp4", "z", "w")
+
+# MCMC settings
+ni1 <- 30000   ;   nt1 <- 10   ;   nb1 <- 10000  ;   nc1 <- 3
+ni2 <- 12000   ;   nt2 <- 20   ;   nb2 <- 2000   ;   nc2 <- 3
+
+```
+
+**Run Models for all species**
+```{r run1}
+outSS.1 <- jags(win.dataSS, initsSS, params1, "MSODM_jags_v1.txt", n.chains = nc1, n.thin = nt1, n.iter = ni1, n.burnin = nb1, parallel=T)
+saveRDS(outSS.1, "./jagsoutput/MSOSM_jags_v1_spSS.Rds")
+outSS.1m <- jags.basic(win.dataSS, initsSS, params2, "MSODM_jags_v1.txt", n.chains = nc2, n.thin = nt2, n.iter = ni2, n.burnin = nb2, parallel=T)
+saveRDS(outSS.1m, "./jagsoutput/MSOSM_jags_v1_spSS_mcmc_samples.Rds")
+
+rm(outSS.1, outSS.1m); gc()
+
+outSS.2 <- jags(win.dataSS, initsSS, params1, "MSODM_jags_v2.txt", n.chains = nc1, n.thin = nt1, n.iter = ni1, n.burnin = nb1, parallel=T)
+saveRDS(outSS.2, "./jagsoutput/MSOSM_jags_v2_spSS.Rds")
+outSS.2m <- jags.basic(win.dataSS, initsSS, params2, "MSODM_jags_v2.txt", n.chains = nc2, n.thin = nt2, n.iter = ni2, n.burnin = nb2, parallel=T)
+saveRDS(outSS.2m, "./jagsoutput/MSOSM_jags_v2_spSS_mcmc_samples.Rds")
+
+rm(outSS.2, outSS.2m); gc()
+
+outSS.3 <- jags(win.dataSS, initsSS, params1, "MSODM_jags_v3.txt", n.chains = nc1, n.thin = nt1, n.iter = ni1, n.burnin = nb1, parallel=T)
+saveRDS(outSS.3, "./jagsoutput/MSOSM_jags_v3_spSS.Rds")
+outSS.3m <- jags.basic(win.dataSS, initsSS, params2, "MSODM_jags_v3.txt", n.chains = nc2, n.thin = nt2, n.iter = ni2, n.burnin = nb2, parallel=T)
+saveRDS(outSS.3m, "./jagsoutput/MSOSM_jags_v3_spSS_mcmc_samples.Rds")
+
+rm(outSS.3, outSS.3m); gc()
+
+outSS.4 <- jags(win.dataSS, initsSS, params1, "MSODM_jags_v4.txt", n.chains = nc1, n.thin = nt1, n.iter = ni1, n.burnin = nb1, parallel=T)
+saveRDS(outSS.4, "./jagsoutput/MSOSM_jags_v4_spSS.Rds")
+outSS.4m <- jags.basic(win.dataSS, initsSS, params2, "MSODM_jags_v4.txt", n.chains = nc2, n.thin = nt2, n.iter = ni2, n.burnin = nb2, parallel=T)
+saveRDS(outSS.4m, "./jagsoutput/MSOSM_jags_v4_spSS_mcmc_samples.Rds")
+
+rm(outSS.4, outSS.4m); gc()
+```
+
+**Load models** separately to check convergence
+```{r}
+# rm(list=ls())
+splist <- c("Robust Ctenotus", "Eastern Three Lined Skink", "Pale flecked Garden Skink", "South eastern Slider", "Southern Grass Skink", "Shrubland Morethia Skink", "Southern Water Skink", "White's Skink")
+dpSS <- dataprep(filepath="./example_msom.csv", specieslist=splist)
+
+#Load the models and mcmc chains from the jags.basic model
+v1 <- readRDS("./jagsoutput/MSOSM_jags_v1_spSS.Rds")
+v1mc <- readRDS("./jagsoutput/MSOSM_jags_v1_spSS_mcmc_samples.Rds")
+
+v2 <- readRDS("./jagsoutput/MSOSM_jags_v2_spSS.Rds")
+v2mc <- readRDS("./jagsoutput/MSOSM_jags_v2_spSS_mcmc_samples.Rds")
+
+v3 <- readRDS("./jagsoutput/MSOSM_jags_v3_spSS.Rds")
+v3mc <- readRDS("./jagsoutput/MSOSM_jags_v3_spSS_mcmc_samples.Rds")
+
+v4 <- readRDS("./jagsoutput/MSOSM_jags_v4_spSS.Rds")
+v4mc <- readRDS("./jagsoutput/MSOSM_jags_v4_spSS_mcmc_samples.Rds")
+
+# See model summaries
+summary(v1)
+summary(v2)
+summary(v3)
+summary(v4)
+
+# See baseline estimates of species-specific occupancy and detection
+occ.det.sum(dpSS, v1)
+occ.det.sum(dpSS, v2)
+occ.det.sum(dpSS, v3)
+occ.det.sum(dpSS, v4)
+
+# Calculate species richness at each site for the models
+v1sprich <- extract.nsite(v1)
+write.csv(v1sprich, "./species_prediction/v1SSNsite.csv")
+v2sprich <- extract.nsite(v2)
+write.csv(v2sprich, "./species_prediction/v2SSNsite.csv")
+v3sprich <- extract.nsite(v3)
+write.csv(v3sprich, "./species_prediction/v3SSNsite.csv")
+v4sprich <- extract.nsite(v4)
+write.csv(v4sprich, "./species_prediction/v4SSNsite.csv")
+
+# Create a list of estimated true occurrence for species at a site, with X and Y coords for that site for visualisation
+spp.predv1 <- spp.site(dpSS, v1)
+write.csv(spp.predv1, "./species_prediction/v1SpPred.csv")
+spp.predv2 <- spp.site(dpSS, v2)
+write.csv(spp.predv2, "./species_prediction/v2SpPred.csv")
+spp.predv3 <- spp.site(dpSS, v3)
+write.csv(spp.predv3, "./species_prediction/v3SpPred.csv")
+spp.predv4 <- spp.site(dpSS, v4)
+write.csv(spp.predv4, "./species_prediction/v4SpPred.csv")
+
+plotobs.est(dpSS, v1) # Plot observed number of species against estimated number of species
+plotocc.det(dpSS, v1) # Plot occupancy vs detection estimate
+plotobs.sites(dpSS, v1) # Plot estimated (Nsite) against observed species richness
+
+plotobs.est(dpSS, v2)
+plotocc.det(dpSS, v2)
+plotobs.sites(dpSS, v2)
+
+plotobs.est(dpSS, v3)
+plotocc.det(dpSS, v3)
+plotobs.sites(dpSS, v3)
+
+plotobs.est(dpSS, v4)
+plotocc.det(dpSS, v4)
+plotobs.sites(dpSS, v4)
+
+# Community distribution of average occupancy and detection probability
+plotcomm.dist(v1)
+plotcomm.dist(v2)
+plotcomm.dist(v3)
+plotcomm.dist(v4)
+
+plotcovar.relation(dpSS, v1) # Visualize covariate mean relationships for the average species
+plotreg.coef(dpSS, v1, v1mc) # Plot regression coefficients
+plotdet.covar(dpSS, v1, v1mc) # Predict detection for temperature and rainfall for each of the observed species
+
+plotcovar.relation(dpSS, v2)
+plotreg.coef(dpSS, v2, v2mc)
+plotdet.covar(dpSS, v2, v2mc)
+
+plotcovar.relation(dpSS, v3)
+plotreg.coef(dpSS, v3, v3mc)
+plotdet.covar(dpSS, v3, v3mc)
+
+plotcovar.relation(dpSS, v4)
+plotreg.coef(dpSS, v4, v4mc)
+plotdet.covar(dpSS, v4, v4mc)
+```
